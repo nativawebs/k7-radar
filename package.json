@@ -1,0 +1,27 @@
+{
+  "name": "k7-product-radar",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev --workspace @k7/web",
+    "dev:web": "npm run dev --workspace @k7/web",
+    "dev:api": "npm run dev --workspace @k7/api",
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "check:woocommerce": "node scripts/check-woocommerce-rest.mjs",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "prisma": "^5.22.0",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "K7 Product Radar",
+  "short_name": "K7 Radar",
+  "description": "Tablero de decision comercial para productos ganadores de Kiosko7.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#F97316",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
