@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file=../../.env --watch --import tsx src/server.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p ../../packages/business/tsconfig.json && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
