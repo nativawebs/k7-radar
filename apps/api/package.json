@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file=../../.env --watch --import tsx src/server.ts",
-    "build": "tsc -p ../../packages/business/tsconfig.json && tsc -p tsconfig.json",
+    "build": "prisma generate --schema ../../prisma/schema.prisma && tsc -p ../../packages/business/tsconfig.json && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
+    "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }
