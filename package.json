@@ -9,6 +9,7 @@
     "build": "npm run build --workspace @k7/web",
     "typecheck": "npm run typecheck --workspace @k7/web",
     "check:woocommerce": "node scripts/check-woocommerce-rest.mjs",
+    "seed:super-admin": "node --env-file=.env scripts/create-super-admin.mjs",
     "supabase:functions": "echo Deploy Supabase Edge Functions desde Supabase CLI o dashboard"
   },
   "workspaces": [
