@@ -8,7 +8,5 @@ self.addEventListener("activate", (event) => {
       .keys()
       .then((cacheNames) => Promise.all(cacheNames.map((name) => caches.delete(name))))
       .then(() => self.registration.unregister())
-      .then(() => self.clients.matchAll())
-      .then((clients) => Promise.all(clients.map((client) => client.navigate(client.url))))
   );
 });
