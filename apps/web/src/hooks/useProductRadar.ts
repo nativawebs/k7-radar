@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { demoProducts, enrichProduct, type ProductDemo } from "../data/demo";
+import { enrichProduct, type ProductDemo } from "../data/demo";
 import { supabase } from "../lib/supabase";
 import type { CampaignChannel, CampaignStatus, LogisticComplexity, ProductStatus } from "../types/business";
 
@@ -185,16 +185,15 @@ function buildDashboard(metrics: CampaignMetricRow[], sales: CampaignSaleRow[]):
 }
 
 export function useProductRadar(): RadarState {
-  const fallbackProducts = useMemo(() => demoProducts.map(enrichProduct).sort((a, b) => b.score.total - a.score.total), []);
   const [state, setState] = useState<Omit<RadarState, "refresh">>({
-    products: fallbackProducts,
+    products: [],
     campaigns: [],
     metrics: [],
     sales: [],
     syncLogs: [],
     dashboard: [],
     isLoading: true,
-    source: "demo"
+    source: "supabase"
   });
 
   const refresh = useCallback(async () => {
@@ -211,16 +210,31 @@ export function useProductRadar(): RadarState {
         })
       ]);
 
-    if (productsError || !products?.length) {
+    if (productsError) {
+      window.alert(`No se pudieron cargar los productos desde Supabase: ${productsError.message}`);
       setState({
-        products: fallbackProducts,
+        products: [],
         campaigns: (campaigns ?? []) as CampaignRow[],
         metrics: (metrics ?? []) as CampaignMetricRow[],
         sales: (sales ?? []) as CampaignSaleRow[],
         syncLogs: (syncLogs ?? []) as SyncLogRow[],
         dashboard: buildDashboard((metrics ?? []) as CampaignMetricRow[], (sales ?? []) as CampaignSaleRow[]),
         isLoading: false,
-        source: "demo"
+        source: "supabase"
+      });
+      return;
+    }
+
+    if (!products?.length) {
+      setState({
+        products: [],
+        campaigns: (campaigns ?? []) as CampaignRow[],
+        metrics: (metrics ?? []) as CampaignMetricRow[],
+        sales: (sales ?? []) as CampaignSaleRow[],
+        syncLogs: (syncLogs ?? []) as SyncLogRow[],
+        dashboard: buildDashboard((metrics ?? []) as CampaignMetricRow[], (sales ?? []) as CampaignSaleRow[]),
+        isLoading: false,
+        source: "supabase"
       });
       return;
     }
@@ -245,7 +259,7 @@ export function useProductRadar(): RadarState {
       isLoading: false,
       source: "supabase"
     });
-  }, [fallbackProducts]);
+  }, []);
 
   useEffect(() => {
     void refresh();
