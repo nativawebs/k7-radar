@@ -394,77 +394,121 @@ function Radar({ products, onRefresh, onSelect }: { products: EnrichedProduct[];
   );
 }
 
-function ProductForm({ onSaved }: { onSaved: () => Promise<void> }) {
+function buildProductPayload(form: FormData, status: ProductStatus) {
+  const financials = calculateFinancials({
+    supplierCost: numberValue(form, "supplier_cost"),
+    salePrice: numberValue(form, "ideal_sale_price"),
+    targetSales: 10
+  });
+  const score = calculateProductScore({
+    grossMargin: financials.grossMargin,
+    grossMarginPercent: financials.grossMarginPercent,
+    stock: numberValue(form, "stock"),
+    targetSales: 10,
+    isPriceCompetitive: Boolean(form.get("is_price_competitive")),
+    contentScore: numberValue(form, "content_score", 1),
+    wowScore: numberValue(form, "wow_score", 1),
+    logisticComplexity: stringValue(form, "logistic_complexity", "media") as never,
+    supplierScore: numberValue(form, "supplier_score", 1),
+    hasRealSalesData: Boolean(form.get("has_real_sales_data"))
+  });
+
+  return {
+    name: stringValue(form, "name"),
+    dropi_code: stringValue(form, "dropi_code") || null,
+    supplier_name: stringValue(form, "supplier_name") || null,
+    supplier_cost: numberValue(form, "supplier_cost"),
+    ideal_sale_price: numberValue(form, "ideal_sale_price"),
+    market_price_average: numberValue(form, "market_price_average"),
+    stock: numberValue(form, "stock"),
+    category: stringValue(form, "category") || null,
+    woo_sku: stringValue(form, "woo_sku") || stringValue(form, "dropi_code") || null,
+    logistic_complexity: stringValue(form, "logistic_complexity", "media"),
+    wow_score: numberValue(form, "wow_score", 1),
+    content_score: numberValue(form, "content_score", 1),
+    supplier_score: numberValue(form, "supplier_score", 1),
+    is_price_competitive: Boolean(form.get("is_price_competitive")),
+    has_real_sales_data: Boolean(form.get("has_real_sales_data")),
+    priority_score: score.total,
+    status,
+    updated_at: new Date().toISOString()
+  };
+}
+
+function ProductForm({
+  onSaved,
+  product,
+  title = "Crear producto a medir",
+  submitLabel,
+  onCancel
+}: {
+  onSaved: () => Promise<void>;
+  product?: EnrichedProduct;
+  title?: string;
+  submitLabel?: string;
+  onCancel?: () => void;
+}) {
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setSaving(true);
-    const form = new FormData(event.currentTarget);
-    const financials = calculateFinancials({
-      supplierCost: numberValue(form, "supplier_cost"),
-      salePrice: numberValue(form, "ideal_sale_price"),
-      targetSales: 10
-    });
-    const score = calculateProductScore({
-      grossMargin: financials.grossMargin,
-      grossMarginPercent: financials.grossMarginPercent,
-      stock: numberValue(form, "stock"),
-      targetSales: 10,
-      isPriceCompetitive: Boolean(form.get("is_price_competitive")),
-      contentScore: numberValue(form, "content_score", 1),
-      wowScore: numberValue(form, "wow_score", 1),
-      logisticComplexity: stringValue(form, "logistic_complexity", "media") as never,
-      supplierScore: numberValue(form, "supplier_score", 1),
-      hasRealSalesData: false
-    });
+    const form = new FormData(formElement);
+    const payload = buildProductPayload(form, product?.status ?? "detectado");
+    const query = product
+      ? supabase.from("products").update(payload).eq("id", product.id)
+      : supabase.from("products").insert({ id: crypto.randomUUID(), ...payload });
+    const { error } = await query;
 
-    await supabase.from("products").insert({
-      id: crypto.randomUUID(),
-      name: stringValue(form, "name"),
-      dropi_code: stringValue(form, "dropi_code") || null,
-      supplier_name: stringValue(form, "supplier_name") || null,
-      supplier_cost: numberValue(form, "supplier_cost"),
-      ideal_sale_price: numberValue(form, "ideal_sale_price"),
-      market_price_average: numberValue(form, "market_price_average"),
-      stock: numberValue(form, "stock"),
-      category: stringValue(form, "category") || null,
-      woo_sku: stringValue(form, "woo_sku") || stringValue(form, "dropi_code") || null,
-      logistic_complexity: stringValue(form, "logistic_complexity", "media"),
-      wow_score: numberValue(form, "wow_score", 1),
-      content_score: numberValue(form, "content_score", 1),
-      supplier_score: numberValue(form, "supplier_score", 1),
-      is_price_competitive: Boolean(form.get("is_price_competitive")),
-      priority_score: score.total,
-      status: "detectado"
-    });
-    event.currentTarget.reset();
+    if (error) {
+      setSaving(false);
+      window.alert(`No se pudo guardar el producto: ${error.message}`);
+      return;
+    }
+
+    if (!product) formElement.reset();
     setSaving(false);
     await onSaved();
+    onCancel?.();
   }
+
+  const row = product?.row;
+  const actionLabel = submitLabel ?? (product ? "Guardar cambios" : "Crear producto");
 
   return (
     <Card>
-      <h3 className="font-black">Crear producto a medir</h3>
+      <h3 className="font-black">{title}</h3>
       <form onSubmit={handleSubmit} className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Input name="name" label="Nombre" required />
-        <Input name="dropi_code" label="Codigo Dropi" />
-        <Input name="supplier_name" label="Proveedor" />
-        <Input name="category" label="Categoria" />
-        <Input name="supplier_cost" label="Costo proveedor" type="number" step="0.01" required />
-        <Input name="ideal_sale_price" label="Precio ideal" type="number" step="0.01" required />
-        <Input name="market_price_average" label="Precio mercado prom." type="number" step="0.01" />
-        <Input name="stock" label="Stock" type="number" required />
-        <Input name="woo_sku" label="SKU WooCommerce" />
-        <Select name="logistic_complexity" label="Complejidad" options={["baja", "media", "alta"]} />
-        <Input name="wow_score" label="Wow 1-5" type="number" min="1" max="5" defaultValue="3" />
-        <Input name="content_score" label="Contenido 1-5" type="number" min="1" max="5" defaultValue="3" />
-        <Input name="supplier_score" label="Proveedor 1-5" type="number" min="1" max="5" defaultValue="3" />
+        <Input name="name" label="Nombre" required defaultValue={product?.name} />
+        <Input name="dropi_code" label="Codigo Dropi" defaultValue={row?.dropi_code ?? ""} />
+        <Input name="supplier_name" label="Proveedor" defaultValue={product?.supplierName === "Sin proveedor" ? "" : product?.supplierName} />
+        <Input name="category" label="Categoria" defaultValue={product?.category === "Sin categoria" ? "" : product?.category} />
+        <Input name="supplier_cost" label="Costo proveedor" type="number" step="0.01" required defaultValue={product?.supplierCost} />
+        <Input name="ideal_sale_price" label="Precio ideal" type="number" step="0.01" required defaultValue={product?.idealSalePrice} />
+        <Input name="market_price_average" label="Precio mercado prom." type="number" step="0.01" defaultValue={product?.marketPriceAverage} />
+        <Input name="stock" label="Stock" type="number" required defaultValue={product?.stock} />
+        <Input name="woo_sku" label="SKU WooCommerce" defaultValue={row?.woo_sku ?? ""} />
+        <Select name="logistic_complexity" label="Complejidad" options={["baja", "media", "alta"]} defaultValue={product?.logisticComplexity ?? "media"} />
+        <Input name="wow_score" label="Wow 1-5" type="number" min="1" max="5" defaultValue={product?.wowScore ?? 3} />
+        <Input name="content_score" label="Contenido 1-5" type="number" min="1" max="5" defaultValue={product?.contentScore ?? 3} />
+        <Input name="supplier_score" label="Proveedor 1-5" type="number" min="1" max="5" defaultValue={product?.supplierScore ?? 3} />
         <label className="flex items-center gap-2 text-sm font-semibold">
-          <input name="is_price_competitive" type="checkbox" className="h-4 w-4 accent-k7-orange" />
+          <input name="is_price_competitive" type="checkbox" className="h-4 w-4 accent-k7-orange" defaultChecked={product?.isPriceCompetitive} />
           Precio competitivo
         </label>
-        <Button disabled={saving} className="sm:col-span-2 xl:col-span-4">{saving ? "Guardando..." : "Crear producto"}</Button>
+        <label className="flex items-center gap-2 text-sm font-semibold">
+          <input name="has_real_sales_data" type="checkbox" className="h-4 w-4 accent-k7-orange" defaultChecked={product?.hasRealSalesData} />
+          Tiene data real
+        </label>
+        <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-4">
+          <Button disabled={saving}>{saving ? "Guardando..." : actionLabel}</Button>
+          {onCancel && (
+            <Button type="button" variant="muted" onClick={onCancel}>
+              Cancelar
+            </Button>
+          )}
+        </div>
       </form>
     </Card>
   );
@@ -497,20 +541,47 @@ function ProductCard({ product, onSelect }: { product: EnrichedProduct; onSelect
 }
 
 function Top10({ products, onRefresh, onSelect }: { products: EnrichedProduct[]; onRefresh: () => Promise<void>; onSelect: (id: string) => void }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const topProducts = products.slice(0, 10);
+
   return (
     <ViewFrame eyebrow="Top 10" title="Ranking automatico de productos">
+      <ProductForm onSaved={onRefresh} title="Crear producto para el ranking" submitLabel="Crear y recalcular Top 10" />
       <div className="space-y-3">
-        {products.slice(0, 10).map((product, index) => (
-          <Card key={product.id} className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <button onClick={() => onSelect(product.id)} className="flex flex-1 items-center gap-3 text-left">
-              <div className="grid h-10 w-10 place-items-center rounded-xl bg-k7-orange font-black text-white">{index + 1}</div>
-              <div>
-                <h3 className="font-black">{product.name}</h3>
-                <p className="text-sm text-gray-500">Score {product.score.total} - Margen {money(product.financials.grossMargin)} - Stock {product.stock}</p>
-              </div>
-            </button>
-            <DecisionButtons product={product} onRefresh={onRefresh} />
+        {topProducts.length === 0 && (
+          <Card>
+            <p className="text-sm font-semibold text-gray-500">Todavia no hay productos para rankear.</p>
           </Card>
+        )}
+        {topProducts.map((product, index) => (
+          <div key={product.id} className="space-y-3">
+            <Card className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <button onClick={() => onSelect(product.id)} className="flex flex-1 items-center gap-3 text-left">
+                <div className="grid h-10 w-10 place-items-center rounded-xl bg-k7-orange font-black text-white">{index + 1}</div>
+                <div>
+                  <h3 className="font-black">{product.name}</h3>
+                  <p className="text-sm text-gray-500">Score {product.score.total} - Margen {money(product.financials.grossMargin)} - Stock {product.stock}</p>
+                </div>
+              </button>
+              <div className="flex flex-col gap-2 sm:items-end">
+                <DecisionButtons product={product} onRefresh={onRefresh} />
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="ghost" onClick={() => onSelect(product.id)}>Ver</Button>
+                  <Button variant="secondary" onClick={() => setEditingId(editingId === product.id ? null : product.id)}>Editar</Button>
+                  <Button variant="danger" onClick={() => void deleteProduct(product.id, onRefresh)}>Eliminar</Button>
+                </div>
+              </div>
+            </Card>
+            {editingId === product.id && (
+              <ProductForm
+                product={product}
+                onSaved={onRefresh}
+                title={`Editar ${product.name}`}
+                submitLabel="Guardar producto"
+                onCancel={() => setEditingId(null)}
+              />
+            )}
+          </div>
         ))}
       </div>
     </ViewFrame>
@@ -550,14 +621,23 @@ function ProductDetail({ product, onRefresh }: { product: EnrichedProduct; onRef
 }
 
 async function deleteProduct(productId: string, onRefresh: () => Promise<void>) {
-  await supabase.from("products").delete().eq("id", productId);
+  if (!window.confirm("Quieres eliminar este producto? Esta accion no se puede deshacer.")) return;
+  const { error } = await supabase.from("products").delete().eq("id", productId);
+  if (error) {
+    window.alert(`No se pudo eliminar el producto: ${error.message}`);
+    return;
+  }
   await onRefresh();
 }
 
 function DecisionButtons({ product, onRefresh }: { product: EnrichedProduct; onRefresh: () => Promise<void> }) {
   async function decide(status: ProductStatus) {
-    await supabase.from("products").update({ status, updated_at: new Date().toISOString() }).eq("id", product.id);
-    await supabase.from("decision_logs").insert({
+    const { error } = await supabase.from("products").update({ status, updated_at: new Date().toISOString() }).eq("id", product.id);
+    if (error) {
+      window.alert(`No se pudo actualizar el estado: ${error.message}`);
+      return;
+    }
+    const { error: logError } = await supabase.from("decision_logs").insert({
       id: crypto.randomUUID(),
       product_id: product.id,
       decision: status === "pausado" ? "pausar" : status === "descartado" ? "descartar" : status === "ajustar" ? "ajustar" : "escalar",
@@ -565,6 +645,7 @@ function DecisionButtons({ product, onRefresh }: { product: EnrichedProduct; onR
       score_before: product.score.total,
       score_after: product.score.total
     });
+    if (logError) window.alert(`El estado cambio, pero no se guardo el log: ${logError.message}`);
     await onRefresh();
   }
 
@@ -860,11 +941,11 @@ function Input(props: React.InputHTMLAttributes<HTMLInputElement> & { label: str
   );
 }
 
-function Select({ label, name, options }: { label: string; name: string; options: string[] }) {
+function Select({ label, name, options, defaultValue }: { label: string; name: string; options: string[]; defaultValue?: string }) {
   return (
     <label className="text-sm font-semibold">
       {label}
-      <select name={name} className="mt-1 min-h-11 w-full rounded-xl border border-k7-line px-3 outline-none focus:border-k7-orange focus:ring-2 focus:ring-orange-100">
+      <select name={name} defaultValue={defaultValue} className="mt-1 min-h-11 w-full rounded-xl border border-k7-line px-3 outline-none focus:border-k7-orange focus:ring-2 focus:ring-orange-100">
         {options.map((option) => <option key={option} value={option}>{labelFromKey(option)}</option>)}
       </select>
     </label>
