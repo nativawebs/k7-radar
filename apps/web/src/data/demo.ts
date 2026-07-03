@@ -1,4 +1,6 @@
-import { calculateFinancials, calculateProductScore, recommendDecision, type LogisticComplexity, type ProductStatus } from "@k7/business";
+import { calculateFinancials } from "../lib/calculations";
+import { calculateProductScore, recommendDecision } from "../lib/scoring";
+import type { LogisticComplexity, ProductStatus } from "../types/business";
 
 export type ProductDemo = {
   id: string;

@@ -1,0 +1,5 @@
+[functions.woocommerce-webhook-orders]
+verify_jwt = false
+
+[functions.sync-woocommerce-orders]
+verify_jwt = true

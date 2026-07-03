@@ -14,7 +14,7 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
-import { enrichedProducts } from "./data/demo";
+import { useProductRadar, type EnrichedProduct } from "./hooks/useProductRadar";
 import { labelFromKey, money, percent } from "./lib/format";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { Badge, Button, Card, MetricCard, TrafficLight } from "./components/ui";
@@ -39,6 +39,8 @@ function statusTone(status: string) {
 
 export function App() {
   const { isLoading, user, signOut } = useAuth();
+  const radar = useProductRadar();
+  const enrichedProducts = radar.products;
   const [view, setView] = useState<View>("dashboard");
   const [selectedId, setSelectedId] = useState(enrichedProducts[0]?.id ?? "");
   const selected = enrichedProducts.find((product) => product.id === selectedId) ?? enrichedProducts[0];
@@ -107,13 +109,13 @@ export function App() {
           </div>
         </header>
 
-        {view === "dashboard" && <Dashboard summary={summary} goTo={(next) => setView(next)} />}
-        {view === "radar" && <Radar onSelect={(id) => { setSelectedId(id); setView("detail"); }} />}
-        {view === "top10" && <Top10 onSelect={(id) => { setSelectedId(id); setView("detail"); }} />}
+        {view === "dashboard" && <Dashboard products={enrichedProducts} summary={summary} goTo={(next) => setView(next)} source={radar.source} loading={radar.isLoading} />}
+        {view === "radar" && <Radar products={enrichedProducts} onSelect={(id) => { setSelectedId(id); setView("detail"); }} />}
+        {view === "top10" && <Top10 products={enrichedProducts} onSelect={(id) => { setSelectedId(id); setView("detail"); }} />}
         {view === "detail" && selected && <ProductDetail product={selected} />}
         {view === "newCampaign" && selected && <NewCampaign productName={selected.name} />}
-        {view === "campaigns" && <Campaigns />}
-        {view === "sync" && <WooSync />}
+        {view === "campaigns" && <Campaigns products={enrichedProducts} />}
+        {view === "sync" && <WooSync syncLogs={radar.syncLogs} />}
       </main>
 
       <nav className="fixed bottom-0 left-0 right-0 z-30 grid grid-cols-5 border-t border-k7-line bg-white px-2 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] lg:hidden">
@@ -163,14 +165,29 @@ function NavButton({ item, active, onClick }: { item: { label: string; icon: typ
   );
 }
 
-function Dashboard({ summary, goTo }: { summary: { salesOkToday: number; estimatedProfit: number; activeCampaigns: number; alerts: number }; goTo: (view: View) => void }) {
-  const top = enrichedProducts[0];
-  const worst = enrichedProducts[enrichedProducts.length - 1];
+function Dashboard({
+  products,
+  summary,
+  goTo,
+  source,
+  loading
+}: {
+  products: EnrichedProduct[];
+  summary: { salesOkToday: number; estimatedProfit: number; activeCampaigns: number; alerts: number };
+  goTo: (view: View) => void;
+  source: "supabase" | "demo";
+  loading: boolean;
+}) {
+  const top = products[0];
+  const worst = products[products.length - 1];
   return (
     <div className="space-y-5">
       <section>
         <p className="text-sm font-bold text-k7-orange">Hoy</p>
         <h1 className="text-3xl font-black tracking-normal">Productos que merecen atencion hoy</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          {loading ? "Cargando datos..." : source === "supabase" ? "Datos conectados a Supabase" : "Vista demo hasta registrar productos reales"}
+        </p>
       </section>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="Ventas OK hoy" value={String(summary.salesOkToday)} hint="Solo pedidos WooCommerce processing" />
@@ -219,11 +236,11 @@ function MetricMini({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Radar({ onSelect }: { onSelect: (id: string) => void }) {
+function Radar({ products, onSelect }: { products: EnrichedProduct[]; onSelect: (id: string) => void }) {
   return (
     <ViewFrame eyebrow="Radar de Productos" title="Productos candidatos">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {enrichedProducts.map((product) => (
+        {products.map((product) => (
           <ProductCard key={product.id} product={product} onSelect={() => onSelect(product.id)} />
         ))}
       </div>
@@ -231,7 +248,7 @@ function Radar({ onSelect }: { onSelect: (id: string) => void }) {
   );
 }
 
-function ProductCard({ product, onSelect }: { product: (typeof enrichedProducts)[number]; onSelect: () => void }) {
+function ProductCard({ product, onSelect }: { product: EnrichedProduct; onSelect: () => void }) {
   const light = product.financials.grossMargin >= 8 && product.financials.grossMarginPercent >= 30 ? "green" : product.stock < 10 ? "red" : "yellow";
   return (
     <Card>
@@ -256,11 +273,11 @@ function ProductCard({ product, onSelect }: { product: (typeof enrichedProducts)
   );
 }
 
-function Top10({ onSelect }: { onSelect: (id: string) => void }) {
+function Top10({ products, onSelect }: { products: EnrichedProduct[]; onSelect: (id: string) => void }) {
   return (
     <ViewFrame eyebrow="Top 10" title="Ranking automatico de productos">
       <div className="space-y-3">
-        {enrichedProducts.map((product, index) => (
+        {products.map((product, index) => (
           <Card key={product.id} className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               <div className="grid h-10 w-10 place-items-center rounded-xl bg-k7-orange font-black text-white">{index + 1}</div>
@@ -282,7 +299,7 @@ function Top10({ onSelect }: { onSelect: (id: string) => void }) {
   );
 }
 
-function ProductDetail({ product }: { product: (typeof enrichedProducts)[number] }) {
+function ProductDetail({ product }: { product: EnrichedProduct }) {
   return (
     <ViewFrame eyebrow="Producto Detalle" title={product.name}>
       <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -360,11 +377,11 @@ function NewCampaign({ productName }: { productName: string }) {
   );
 }
 
-function Campaigns() {
+function Campaigns({ products }: { products: EnrichedProduct[] }) {
   return (
     <ViewFrame eyebrow="Campanas" title="Pruebas comerciales activas">
       <div className="grid gap-4 lg:grid-cols-2">
-        {enrichedProducts.map((product) => (
+        {products.map((product) => (
           <Card key={product.id}>
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -385,13 +402,17 @@ function Campaigns() {
   );
 }
 
-function WooSync() {
+function WooSync({ syncLogs }: { syncLogs: Array<{ status: string; imported_orders: number | null; imported_lines: number | null; error_message: string | null; synced_at: string | null }> }) {
+  const lastSync = syncLogs[0];
+  const importedOrders = syncLogs.reduce((sum, log) => sum + Number(log.imported_orders ?? 0), 0);
+  const errors = syncLogs.filter((log) => log.status === "error").length;
+
   return (
     <ViewFrame eyebrow="WooCommerce Sync" title="Ventas reales processing">
       <div className="grid gap-4 lg:grid-cols-3">
-        <MetricCard title="Ultima sincronizacion" value="Pendiente" hint="Webhook + sincronizacion manual" />
-        <MetricCard title="Pedidos importados" value="0" hint="Solo estado processing" />
-        <MetricCard title="Sin vincular" value="0" hint="Por woo_product_id o woo_sku" />
+        <MetricCard title="Ultima sincronizacion" value={lastSync?.synced_at ? new Date(lastSync.synced_at).toLocaleDateString() : "Pendiente"} hint="Webhook + sincronizacion manual" />
+        <MetricCard title="Pedidos importados" value={String(importedOrders)} hint="Solo estado processing" />
+        <MetricCard title="Errores" value={String(errors)} hint="Revisar productos sin vincular" />
       </div>
       <Card className="mt-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
