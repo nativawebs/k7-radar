@@ -14,9 +14,10 @@ const variants: Record<NonNullable<ButtonProps["variant"]>, string> = {
   muted: "bg-gray-200 text-k7-ink hover:bg-gray-300"
 };
 
-export function Button({ className = "", variant = "primary", ...props }: ButtonProps) {
+export function Button({ className = "", variant = "primary", type = "button", ...props }: ButtonProps) {
   return (
     <button
+      type={type}
       className={`min-h-11 rounded-xl px-4 py-2 text-sm font-semibold ${variants[variant]} ${className}`}
       {...props}
     />

@@ -502,7 +502,7 @@ function ProductForm({
           Tiene data real
         </label>
         <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-4">
-          <Button disabled={saving}>{saving ? "Guardando..." : actionLabel}</Button>
+          <Button type="submit" disabled={saving}>{saving ? "Guardando..." : actionLabel}</Button>
           {onCancel && (
             <Button type="button" variant="muted" onClick={onCancel}>
               Cancelar
@@ -741,7 +741,7 @@ function CampaignForm({ products, onSaved }: { products: EnrichedProduct[]; onSa
         <Input name="main_hook" label="Hook principal" />
         <Input name="offer" label="Oferta" />
         <Input name="cta" label="CTA" />
-        <Button className="sm:col-span-2 xl:col-span-4">Crear campana</Button>
+        <Button type="submit" className="sm:col-span-2 xl:col-span-4">Crear campana</Button>
       </form>
     </Card>
   );
@@ -791,7 +791,7 @@ function MetricForm({ campaigns, onSaved }: { campaigns: CampaignRow[]; onSaved:
         <Input name="clicks" label="Clics" type="number" />
         <Input name="messages" label="Mensajes" type="number" />
         <Input name="impressions" label="Impresiones" type="number" />
-        <Button className="sm:col-span-2 xl:col-span-4">Guardar metricas</Button>
+        <Button type="submit" className="sm:col-span-2 xl:col-span-4">Guardar metricas</Button>
       </form>
     </Card>
   );
