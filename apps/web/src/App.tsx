@@ -87,6 +87,71 @@ function stringValue(formData: FormData, key: string, fallback = "") {
   return String(formData.get(key) ?? fallback).trim();
 }
 
+function getTop10Products(products: EnrichedProduct[]) {
+  return products
+    .filter((product) => Boolean(product.row?.is_top10))
+    .sort((a, b) => {
+      const positionA = a.row?.top10_position ?? 99;
+      const positionB = b.row?.top10_position ?? 99;
+      if (positionA !== positionB) return positionA - positionB;
+      return b.score.total - a.score.total;
+    })
+    .slice(0, 10);
+}
+
+async function placeProductInTop10(product: EnrichedProduct, products: EnrichedProduct[], onRefresh: () => Promise<void>) {
+  const currentPosition = product.row?.is_top10 ? product.row?.top10_position : null;
+  const answer = window.prompt("En que puesto del Top 10 quieres colocar este producto? Escribe un numero del 1 al 10.", String(currentPosition ?? 1));
+  if (!answer) return;
+
+  const position = Number(answer);
+  if (!Number.isInteger(position) || position < 1 || position > 10) {
+    window.alert("El puesto debe ser un numero entero entre 1 y 10.");
+    return;
+  }
+
+  const currentProduct = products.find((item) => item.row?.is_top10 && item.row?.top10_position === position && item.id !== product.id);
+  if (currentProduct && !window.confirm(`El puesto ${position} esta ocupado por "${currentProduct.name}". Quieres reemplazarlo?`)) return;
+
+  const { error: clearError } = await supabase
+    .from("products")
+    .update({ is_top10: false, top10_position: null, updated_at: new Date().toISOString() })
+    .eq("is_top10", true)
+    .eq("top10_position", position);
+
+  if (clearError) {
+    window.alert(`No se pudo liberar el puesto del Top 10: ${clearError.message}`);
+    return;
+  }
+
+  const { error } = await supabase
+    .from("products")
+    .update({ is_top10: true, top10_position: position, updated_at: new Date().toISOString() })
+    .eq("id", product.id);
+
+  if (error) {
+    window.alert(`No se pudo colocar el producto en Top 10: ${error.message}`);
+    return;
+  }
+
+  await onRefresh();
+}
+
+async function removeProductFromTop10(product: EnrichedProduct, onRefresh: () => Promise<void>) {
+  if (!window.confirm(`Quieres quitar "${product.name}" del Top 10?`)) return;
+  const { error } = await supabase
+    .from("products")
+    .update({ is_top10: false, top10_position: null, updated_at: new Date().toISOString() })
+    .eq("id", product.id);
+
+  if (error) {
+    window.alert(`No se pudo quitar el producto del Top 10: ${error.message}`);
+    return;
+  }
+
+  await onRefresh();
+}
+
 export function App() {
   const { isLoading, user, signOut } = useAuth();
   const radar = useProductRadar();
@@ -262,7 +327,7 @@ function Dashboard({
   loading: boolean;
   goTo: (view: View) => void;
 }) {
-  const top = products[0];
+  const top = getTop10Products(products)[0];
 
   return (
     <div className="space-y-5">
@@ -288,7 +353,7 @@ function Dashboard({
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-sm text-gray-500">Top producto actual</p>
-              <h2 className="mt-1 text-2xl font-black">{top?.name ?? "Sin productos"}</h2>
+              <h2 className="mt-1 text-2xl font-black">{top?.name ?? "Sin productos en Top 10"}</h2>
             </div>
             {top && <Badge tone="green">Score {top.score.total}</Badge>}
           </div>
@@ -376,17 +441,30 @@ function Radar({ products, onRefresh, onSelect }: { products: EnrichedProduct[];
       </div>
       {mode === "cards" ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {products.map((product) => <ProductCard key={product.id} product={product} onSelect={() => onSelect(product.id)} />)}
+          {products.map((product) => (
+            <ProductCard
+              key={product.id}
+              product={product}
+              products={products}
+              onRefresh={onRefresh}
+              onSelect={() => onSelect(product.id)}
+            />
+          ))}
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-k7-line bg-white">
           {products.map((product) => (
-            <button key={product.id} onClick={() => onSelect(product.id)} className="grid w-full gap-2 border-b border-k7-line p-4 text-left hover:bg-k7-soft sm:grid-cols-[1fr_100px_100px_120px]">
-              <span className="font-black">{product.name}</span>
+            <div key={product.id} className="grid gap-2 border-b border-k7-line p-4 sm:grid-cols-[1fr_100px_100px_120px_170px] sm:items-center">
+              <button onClick={() => onSelect(product.id)} className="text-left font-black hover:text-k7-orange">{product.name}</button>
               <span>Stock {product.stock}</span>
               <span>Score {product.score.total}</span>
-              <Badge tone={statusTone(product.status) as never}>{labelFromKey(product.status)}</Badge>
-            </button>
+              <Badge tone={product.row?.is_top10 ? "green" : statusTone(product.status) as never}>
+                {product.row?.is_top10 ? `Top ${product.row?.top10_position ?? ""}` : labelFromKey(product.status)}
+              </Badge>
+              <Button variant="secondary" onClick={() => void placeProductInTop10(product, products, onRefresh)}>
+                {product.row?.is_top10 ? "Mover Top 10" : "Colocar Top 10"}
+              </Button>
+            </div>
           ))}
         </div>
       )}
@@ -514,11 +592,21 @@ function ProductForm({
   );
 }
 
-function ProductCard({ product, onSelect }: { product: EnrichedProduct; onSelect: () => void }) {
+function ProductCard({
+  product,
+  products,
+  onRefresh,
+  onSelect
+}: {
+  product: EnrichedProduct;
+  products: EnrichedProduct[];
+  onRefresh: () => Promise<void>;
+  onSelect: () => void;
+}) {
   const light = product.financials.grossMargin >= 8 && product.financials.grossMarginPercent >= 30 ? "green" : product.stock < 10 ? "red" : "yellow";
   return (
-    <button onClick={onSelect} className="text-left">
-      <Card className="h-full">
+    <Card className="flex h-full flex-col">
+      <button onClick={onSelect} className="flex-1 text-left">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-black">{product.name}</h3>
@@ -532,32 +620,35 @@ function ProductCard({ product, onSelect }: { product: EnrichedProduct; onSelect
           <MetricMini label="Score" value={`${product.score.total}/100`} />
           <MetricMini label="Estado" value={labelFromKey(product.status)} />
         </div>
-        <div className="mt-4">
+        <div className="mt-4 flex flex-wrap gap-2">
           <Badge tone={statusTone(product.status) as never}>{labelFromKey(product.status)}</Badge>
+          {product.row?.is_top10 && <Badge tone="green">Top {product.row?.top10_position ?? ""}</Badge>}
         </div>
-      </Card>
-    </button>
+      </button>
+      <Button className="mt-4 w-full" variant={product.row?.is_top10 ? "muted" : "secondary"} onClick={() => void placeProductInTop10(product, products, onRefresh)}>
+        {product.row?.is_top10 ? "Mover en Top 10" : "Colocar en Top 10"}
+      </Button>
+    </Card>
   );
 }
 
 function Top10({ products, onRefresh, onSelect }: { products: EnrichedProduct[]; onRefresh: () => Promise<void>; onSelect: (id: string) => void }) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const topProducts = products.slice(0, 10);
+  const topProducts = getTop10Products(products);
 
   return (
-    <ViewFrame eyebrow="Top 10" title="Ranking automatico de productos">
-      <ProductForm onSaved={onRefresh} title="Crear producto para el ranking" submitLabel="Crear y recalcular Top 10" />
+    <ViewFrame eyebrow="Top 10" title="Productos elegidos desde Radar">
       <div className="space-y-3">
         {topProducts.length === 0 && (
           <Card>
-            <p className="text-sm font-semibold text-gray-500">Todavia no hay productos para rankear.</p>
+            <p className="text-sm font-semibold text-gray-500">Todavia no hay productos colocados en Top 10 desde Radar.</p>
           </Card>
         )}
         {topProducts.map((product, index) => (
           <div key={product.id} className="space-y-3">
             <Card className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <button onClick={() => onSelect(product.id)} className="flex flex-1 items-center gap-3 text-left">
-                <div className="grid h-10 w-10 place-items-center rounded-xl bg-k7-orange font-black text-white">{index + 1}</div>
+                <div className="grid h-10 w-10 place-items-center rounded-xl bg-k7-orange font-black text-white">{product.row?.top10_position ?? index + 1}</div>
                 <div>
                   <h3 className="font-black">{product.name}</h3>
                   <p className="text-sm text-gray-500">Score {product.score.total} - Margen {money(product.financials.grossMargin)} - Stock {product.stock}</p>
@@ -567,7 +658,9 @@ function Top10({ products, onRefresh, onSelect }: { products: EnrichedProduct[];
                 <DecisionButtons product={product} onRefresh={onRefresh} />
                 <div className="flex flex-wrap gap-2">
                   <Button variant="ghost" onClick={() => onSelect(product.id)}>Ver</Button>
+                  <Button variant="secondary" onClick={() => void placeProductInTop10(product, products, onRefresh)}>Mover</Button>
                   <Button variant="secondary" onClick={() => setEditingId(editingId === product.id ? null : product.id)}>Editar</Button>
+                  <Button variant="muted" onClick={() => void removeProductFromTop10(product, onRefresh)}>Quitar Top 10</Button>
                   <Button variant="danger" onClick={() => void deleteProduct(product.id, onRefresh)}>Eliminar</Button>
                 </div>
               </div>

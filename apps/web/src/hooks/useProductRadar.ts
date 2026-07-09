@@ -29,6 +29,8 @@ export type ProductRow = {
   is_price_competitive: boolean | null;
   status: ProductStatus | null;
   priority_score: number | null;
+  is_top10: boolean | null;
+  top10_position: number | null;
   observations: string | null;
   main_image_url: string | null;
 };
