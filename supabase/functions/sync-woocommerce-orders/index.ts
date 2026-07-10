@@ -120,13 +120,13 @@ Deno.serve(async (request) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_SECRET_KEY");
     const wooUrl = Deno.env.get("WOOCOMMERCE_URL") ?? Deno.env.get("WOOCOMMERCE_BASE_URL");
     const wooConsumerKey = Deno.env.get("WOOCOMMERCE_CONSUMER_KEY");
     const wooConsumerSecret = Deno.env.get("WOOCOMMERCE_CONSUMER_SECRET");
     const missingSecrets = [
       ["SUPABASE_URL", supabaseUrl],
-      ["SUPABASE_SERVICE_ROLE_KEY", serviceRoleKey],
+      ["SUPABASE_SERVICE_ROLE_KEY o SUPABASE_SECRET_KEY", serviceRoleKey],
       ["WOOCOMMERCE_URL o WOOCOMMERCE_BASE_URL", wooUrl],
       ["WOOCOMMERCE_CONSUMER_KEY", wooConsumerKey],
       ["WOOCOMMERCE_CONSUMER_SECRET", wooConsumerSecret]
