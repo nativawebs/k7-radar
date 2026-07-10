@@ -1027,7 +1027,17 @@ function WooSync({
     setSyncing(false);
 
     if (error) {
-      window.alert(`No se pudo sincronizar WooCommerce: ${error.message}`);
+      const context = (error as { context?: unknown }).context;
+      let details = "";
+      if (context instanceof Response) {
+        try {
+          const body = await context.clone().json() as { error?: string; details?: string };
+          details = body.details || body.error || "";
+        } catch {
+          details = await context.clone().text();
+        }
+      }
+      window.alert(`No se pudo sincronizar WooCommerce: ${details || error.message}`);
       return;
     }
 

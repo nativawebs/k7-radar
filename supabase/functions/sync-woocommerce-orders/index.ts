@@ -22,6 +22,16 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type"
 };
 
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return Response.json(body, { status, headers: corsHeaders });
+}
+
+function normalizeWooCommerceUrl(value: string) {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return new URL(withProtocol);
+}
+
 async function findTrackedProduct(
   supabase: ReturnType<typeof createClient>,
   wooProductId: string | null,
@@ -108,57 +118,78 @@ Deno.serve(async (request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const wooUrl = Deno.env.get("WOOCOMMERCE_URL") ?? Deno.env.get("WOOCOMMERCE_BASE_URL");
-  const wooConsumerKey = Deno.env.get("WOOCOMMERCE_CONSUMER_KEY");
-  const wooConsumerSecret = Deno.env.get("WOOCOMMERCE_CONSUMER_SECRET");
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const wooUrl = Deno.env.get("WOOCOMMERCE_URL") ?? Deno.env.get("WOOCOMMERCE_BASE_URL");
+    const wooConsumerKey = Deno.env.get("WOOCOMMERCE_CONSUMER_KEY");
+    const wooConsumerSecret = Deno.env.get("WOOCOMMERCE_CONSUMER_SECRET");
+    const missingSecrets = [
+      ["SUPABASE_URL", supabaseUrl],
+      ["SUPABASE_SERVICE_ROLE_KEY", serviceRoleKey],
+      ["WOOCOMMERCE_URL o WOOCOMMERCE_BASE_URL", wooUrl],
+      ["WOOCOMMERCE_CONSUMER_KEY", wooConsumerKey],
+      ["WOOCOMMERCE_CONSUMER_SECRET", wooConsumerSecret]
+    ]
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
 
-  if (!supabaseUrl || !serviceRoleKey || !wooUrl || !wooConsumerKey || !wooConsumerSecret) {
-    return Response.json({ error: "Missing WooCommerce or Supabase Edge Function secrets" }, { status: 500, headers: corsHeaders });
-  }
+    if (missingSecrets.length > 0) {
+      return jsonResponse({
+        error: "Faltan secrets en la Edge Function",
+        details: `Configura: ${missingSecrets.join(", ")}`
+      }, 500);
+    }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const url = new URL("/wp-json/wc/v3/orders", wooUrl);
-  url.searchParams.set("status", "processing");
-  url.searchParams.set("per_page", "100");
-  url.searchParams.set("orderby", "date");
-  url.searchParams.set("order", "desc");
-  url.searchParams.set("consumer_key", wooConsumerKey);
-  url.searchParams.set("consumer_secret", wooConsumerSecret);
+    const supabase = createClient(supabaseUrl!, serviceRoleKey!);
+    const baseUrl = normalizeWooCommerceUrl(wooUrl!);
+    const url = new URL("/wp-json/wc/v3/orders", baseUrl);
+    url.searchParams.set("status", "processing");
+    url.searchParams.set("per_page", "100");
+    url.searchParams.set("orderby", "date");
+    url.searchParams.set("order", "desc");
+    url.searchParams.set("consumer_key", wooConsumerKey!);
+    url.searchParams.set("consumer_secret", wooConsumerSecret!);
 
-  const response = await fetch(url);
+    const response = await fetch(url);
 
-  if (!response.ok) {
+    if (!response.ok) {
+      const body = await response.text();
+      const message = `WooCommerce respondio ${response.status}${body ? `: ${body.slice(0, 300)}` : ""}`;
+      await supabase.from("sync_logs").insert({
+        id: crypto.randomUUID(),
+        status: "error",
+        imported_orders: 0,
+        imported_lines: 0,
+        error_message: message
+      });
+      return jsonResponse({ error: "WooCommerce sync failed", details: message }, 502);
+    }
+
+    const orders = (await response.json()) as WooOrder[];
+    let importedLines = 0;
+    let unmatchedLines = 0;
+
+    for (const order of orders) {
+      for (const item of order.line_items ?? []) {
+        const result = await importOrderLine(supabase, order, item);
+        importedLines += result.imported;
+        unmatchedLines += result.unmatched;
+      }
+    }
+
     await supabase.from("sync_logs").insert({
       id: crypto.randomUUID(),
-      status: "error",
-      imported_orders: 0,
-      imported_lines: 0,
-      error_message: `WooCommerce respondio ${response.status}`
+      status: unmatchedLines > 0 ? "error" : "success",
+      imported_orders: orders.length,
+      imported_lines: importedLines,
+      error_message: unmatchedLines > 0 ? `Sincronizacion con ${unmatchedLines} productos sin vincular.` : null
     });
-    return Response.json({ error: "WooCommerce sync failed" }, { status: 502, headers: corsHeaders });
+
+    return jsonResponse({ ok: true, orders: orders.length, importedLines, unmatchedLines });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("sync-woocommerce-orders failed", error);
+    return jsonResponse({ error: "No se pudo sincronizar WooCommerce", details: message }, 500);
   }
-
-  const orders = (await response.json()) as WooOrder[];
-  let importedLines = 0;
-  let unmatchedLines = 0;
-
-  for (const order of orders) {
-    for (const item of order.line_items ?? []) {
-      const result = await importOrderLine(supabase, order, item);
-      importedLines += result.imported;
-      unmatchedLines += result.unmatched;
-    }
-  }
-
-  await supabase.from("sync_logs").insert({
-    id: crypto.randomUUID(),
-    status: unmatchedLines > 0 ? "error" : "success",
-    imported_orders: orders.length,
-    imported_lines: importedLines,
-    error_message: unmatchedLines > 0 ? `Sincronizacion con ${unmatchedLines} productos sin vincular.` : null
-  });
-
-  return Response.json({ ok: true, orders: orders.length, importedLines, unmatchedLines }, { headers: corsHeaders });
 });
