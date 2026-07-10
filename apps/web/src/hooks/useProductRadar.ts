@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { enrichProduct, type ProductDemo } from "../data/demo";
 import { supabase } from "../lib/supabase";
 import type { CampaignChannel, CampaignStatus, LogisticComplexity, ProductStatus } from "../types/business";
@@ -62,6 +62,7 @@ export type CampaignSaleRow = {
   campaign_id: string | null;
   product_id: string;
   woo_order_id: string;
+  woo_line_item_id: string | null;
   woo_order_status: string;
   quantity: number;
   unit_price: number;
@@ -133,6 +134,7 @@ function mapProduct(row: ProductRow, campaigns: CampaignRow[], salesRows: Campai
   const productSales = salesRows.filter((sale) => sale.product_id === row.id);
   const productMetrics = metricRows.filter((metric) => productCampaignIds.includes(metric.campaign_id));
   const sales = productSales.reduce((sum, sale) => sum + toNumber(sale.quantity), 0) + productMetrics.reduce((sum, metric) => sum + toNumber(metric.sales), 0);
+  const actualRevenue = productSales.reduce((sum, sale) => sum + toNumber(sale.line_total), 0) + productMetrics.reduce((sum, metric) => sum + toNumber(metric.revenue), 0);
   const adSpend = productMetrics.reduce((sum, metric) => sum + toNumber(metric.spend), 0);
   const clicks = productMetrics.reduce((sum, metric) => sum + toNumber(metric.clicks), 0);
   const messages = productMetrics.reduce((sum, metric) => sum + toNumber(metric.messages), 0);
@@ -154,6 +156,7 @@ function mapProduct(row: ProductRow, campaigns: CampaignRow[], salesRows: Campai
     isPriceCompetitive: Boolean(row.is_price_competitive),
     hasRealSalesData: Boolean(row.has_real_sales_data || productSales.length > 0 || sales > 0),
     sales,
+    actualRevenue,
     adSpend,
     clicks,
     messages
@@ -187,6 +190,7 @@ function buildDashboard(metrics: CampaignMetricRow[], sales: CampaignSaleRow[]):
 }
 
 export function useProductRadar(): RadarState {
+  const refreshTimeout = useRef<number | null>(null);
   const [state, setState] = useState<Omit<RadarState, "refresh">>({
     products: [],
     campaigns: [],
@@ -265,6 +269,27 @@ export function useProductRadar(): RadarState {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    function scheduleRefresh() {
+      if (refreshTimeout.current) window.clearTimeout(refreshTimeout.current);
+      refreshTimeout.current = window.setTimeout(() => {
+        void refresh();
+      }, 500);
+    }
+
+    const channel = supabase
+      .channel("product-radar-live-sales")
+      .on("postgres_changes", { event: "*", schema: "public", table: "campaign_sales" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "sync_logs" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "products" }, scheduleRefresh)
+      .subscribe();
+
+    return () => {
+      if (refreshTimeout.current) window.clearTimeout(refreshTimeout.current);
+      void supabase.removeChannel(channel);
+    };
   }, [refresh]);
 
   return useMemo(() => ({ ...state, refresh }), [refresh, state]);

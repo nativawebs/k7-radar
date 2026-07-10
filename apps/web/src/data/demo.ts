@@ -22,6 +22,7 @@ export type ProductDemo = {
   adSpend: number;
   clicks: number;
   messages: number;
+  actualRevenue?: number;
 };
 
 export const demoProducts: ProductDemo[] = [
@@ -109,7 +110,7 @@ export function enrichProduct(product: ProductDemo) {
     supplierScore: product.supplierScore,
     hasRealSalesData: product.hasRealSalesData
   });
-  const revenue = product.sales * product.idealSalePrice;
+  const revenue = product.actualRevenue ?? product.sales * product.idealSalePrice;
   const cpa = product.sales > 0 ? product.adSpend / product.sales : product.adSpend;
   const roas = product.adSpend > 0 ? revenue / product.adSpend : 0;
   const estimatedProfit = product.sales * financials.grossMargin - product.adSpend;

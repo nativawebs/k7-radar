@@ -260,7 +260,7 @@ export function App() {
           <Campaigns products={radar.products} campaigns={radar.campaigns} metrics={radar.metrics} onRefresh={radar.refresh} />
         )}
         {view === "reports" && <Reports products={radar.products} campaigns={radar.campaigns} metrics={radar.metrics} dashboard={radar.dashboard} onRefresh={radar.refresh} />}
-        {view === "sync" && <WooSync syncLogs={radar.syncLogs} products={radar.products} />}
+        {view === "sync" && <WooSync syncLogs={radar.syncLogs} products={radar.products} onRefresh={radar.refresh} />}
       </main>
 
       <nav className="fixed bottom-0 left-0 right-0 z-30 grid grid-cols-6 border-t border-k7-line bg-white px-2 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] lg:hidden">
@@ -652,6 +652,11 @@ function Top10({ products, onRefresh, onSelect }: { products: EnrichedProduct[];
                 <div>
                   <h3 className="font-black">{product.name}</h3>
                   <p className="text-sm text-gray-500">Score {product.score.total} - Margen {money(product.financials.grossMargin)} - Stock {product.stock}</p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <MetricMini label="Ventas Woo" value={String(product.sales)} />
+                    <MetricMini label="Vendido" value={money(product.revenue)} />
+                    <MetricMini label="Utilidad est." value={money(product.estimatedProfit)} />
+                  </div>
                 </div>
               </button>
               <div className="flex flex-col gap-2 sm:items-end">
@@ -1000,24 +1005,62 @@ function Reports({
   );
 }
 
-function WooSync({ syncLogs, products }: { syncLogs: Array<{ status: string; imported_orders: number | null; imported_lines: number | null; error_message: string | null; synced_at: string | null }>; products: EnrichedProduct[] }) {
+function WooSync({
+  syncLogs,
+  products,
+  onRefresh
+}: {
+  syncLogs: Array<{ status: string; imported_orders: number | null; imported_lines: number | null; error_message: string | null; synced_at: string | null }>;
+  products: EnrichedProduct[];
+  onRefresh: () => Promise<void>;
+}) {
+  const [syncing, setSyncing] = useState(false);
   const lastSync = syncLogs[0];
   const importedOrders = syncLogs.reduce((sum, log) => sum + Number(log.imported_orders ?? 0), 0);
+  const importedLines = syncLogs.reduce((sum, log) => sum + Number(log.imported_lines ?? 0), 0);
   const errors = syncLogs.filter((log) => log.status === "error").length;
   const trackedWooProducts = products.filter((product) => product.row?.woo_sku || product.row?.woo_product_id).length;
+
+  async function syncWooCommerce() {
+    setSyncing(true);
+    const { data, error } = await supabase.functions.invoke("sync-woocommerce-orders");
+    setSyncing(false);
+
+    if (error) {
+      window.alert(`No se pudo sincronizar WooCommerce: ${error.message}`);
+      return;
+    }
+
+    const result = data as { orders?: number; importedLines?: number; unmatchedLines?: number } | null;
+    await onRefresh();
+    window.alert(`WooCommerce sincronizado: ${result?.orders ?? 0} pedidos, ${result?.importedLines ?? 0} lineas importadas, ${result?.unmatchedLines ?? 0} sin vincular.`);
+  }
 
   return (
     <ViewFrame eyebrow="WooCommerce Sync" title="Ventas reales de productos en seguimiento">
       <div className="grid gap-4 lg:grid-cols-4">
         <MetricCard title="Ultima sincronizacion" value={lastSync?.synced_at ? new Date(lastSync.synced_at).toLocaleDateString() : "Pendiente"} hint="Webhook + sincronizacion manual" />
         <MetricCard title="Pedidos importados" value={String(importedOrders)} hint="Solo estado processing" />
-        <MetricCard title="Productos seguidos" value={String(trackedWooProducts)} hint="Con SKU o woo_product_id" />
+        <MetricCard title="Lineas importadas" value={String(importedLines)} hint="Productos Woo vinculados" />
         <MetricCard title="Errores" value={String(errors)} hint="Revisar productos sin vincular" />
       </div>
       <Card className="mt-4">
-        <h3 className="text-lg font-black">Regla activa</h3>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-lg font-black">Regla activa</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              WooCommerce solo debe sincronizar ventas `processing` y asociarlas a productos que estamos siguiendo por `woo_product_id` o `woo_sku`.
+            </p>
+          </div>
+          <Button onClick={() => void syncWooCommerce()} disabled={syncing}>
+            {syncing ? "Sincronizando..." : "Sincronizar WooCommerce"}
+          </Button>
+        </div>
+      </Card>
+      <Card>
+        <h3 className="text-lg font-black">Productos vinculados</h3>
         <p className="mt-2 text-sm text-gray-600">
-          WooCommerce solo debe sincronizar ventas `processing` y asociarlas a productos que estamos siguiendo por `woo_product_id` o `woo_sku`.
+          {trackedWooProducts} productos del Radar tienen SKU o ID WooCommerce configurado para recibir ventas reales.
         </p>
       </Card>
     </ViewFrame>

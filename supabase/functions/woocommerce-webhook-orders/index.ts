@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.0";
 
 type WooLineItem = {
+  id?: number;
   product_id?: number;
   sku?: string;
   name?: string;
@@ -45,6 +46,7 @@ Deno.serve(async (request) => {
   let unmatched = 0;
 
   for (const item of lineItems) {
+    const wooLineItemId = item.id ? String(item.id) : null;
     const wooProductId = item.product_id ? String(item.product_id) : null;
     const wooSku = item.sku ?? null;
     let products: Array<{ id: string }> | null = null;
@@ -75,16 +77,23 @@ Deno.serve(async (request) => {
       continue;
     }
 
-    await supabase.from("campaign_sales").insert({
+    const sale = {
       id: crypto.randomUUID(),
       product_id: products[0].id,
       woo_order_id: payload.id ? String(payload.id) : null,
+      woo_line_item_id: wooLineItemId,
       woo_order_status: payload.status,
       quantity: item.quantity ?? 0,
       unit_price: item.price ?? 0,
       line_total: Number(item.total ?? 0),
       order_date: payload.date_created ?? new Date().toISOString()
-    });
+    };
+
+    if (wooLineItemId) {
+      await supabase.from("campaign_sales").upsert(sale, { onConflict: "woo_order_id,woo_line_item_id" });
+    } else {
+      await supabase.from("campaign_sales").insert(sale);
+    }
     imported += 1;
   }
 
