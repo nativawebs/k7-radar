@@ -94,6 +94,22 @@ export type SyncLogRow = {
   synced_at: string | null;
 };
 
+export type PlannerActivityRow = {
+  id: string;
+  title: string;
+  description: string | null;
+  activity_type: "campana" | "anuncio" | "monitoreo" | "top10" | "tarea";
+  status: "pendiente" | "en_progreso" | "completada" | "cancelada";
+  scheduled_date: string;
+  scheduled_time: string | null;
+  product_id: string | null;
+  campaign_id: string | null;
+  action_label: string | null;
+  owner: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
 export type EnrichedProduct = ReturnType<typeof enrichProduct> & {
   row?: ProductRow;
 };
@@ -114,6 +130,7 @@ type RadarState = {
   metrics: CampaignMetricRow[];
   sales: CampaignSaleRow[];
   syncLogs: SyncLogRow[];
+  plannerActivities: PlannerActivityRow[];
   dashboard: DashboardPoint[];
   isLoading: boolean;
   source: "supabase" | "demo";
@@ -197,6 +214,7 @@ export function useProductRadar(): RadarState {
     metrics: [],
     sales: [],
     syncLogs: [],
+    plannerActivities: [],
     dashboard: [],
     isLoading: true,
     source: "supabase"
@@ -205,7 +223,14 @@ export function useProductRadar(): RadarState {
   const refresh = useCallback(async () => {
     setState((current) => ({ ...current, isLoading: true }));
 
-    const [{ data: products, error: productsError }, { data: campaigns }, { data: sales }, { data: metrics }, { data: syncLogs }] =
+    const [
+      { data: products, error: productsError },
+      { data: campaigns },
+      { data: sales },
+      { data: metrics },
+      { data: syncLogs },
+      { data: plannerActivities, error: plannerError }
+    ] =
       await Promise.all([
         supabase.from("products").select("*").order("priority_score", { ascending: false }),
         supabase.from("campaigns").select("*").order("created_at", { ascending: false }),
@@ -213,8 +238,13 @@ export function useProductRadar(): RadarState {
         supabase.from("campaign_metrics").select("*").order("date", { ascending: false }),
         supabase.from("sync_logs").select("status, imported_orders, imported_lines, error_message, synced_at").order("synced_at", {
           ascending: false
-        })
+        }),
+        supabase.from("planner_activities").select("*").order("scheduled_date", { ascending: true }).order("scheduled_time", { ascending: true })
       ]);
+
+    if (plannerError) {
+      window.alert(`No se pudieron cargar las actividades del planificador: ${plannerError.message}`);
+    }
 
     if (productsError) {
       window.alert(`No se pudieron cargar los productos desde Supabase: ${productsError.message}`);
@@ -224,6 +254,7 @@ export function useProductRadar(): RadarState {
         metrics: (metrics ?? []) as CampaignMetricRow[],
         sales: (sales ?? []) as CampaignSaleRow[],
         syncLogs: (syncLogs ?? []) as SyncLogRow[],
+        plannerActivities: (plannerActivities ?? []) as PlannerActivityRow[],
         dashboard: buildDashboard((metrics ?? []) as CampaignMetricRow[], (sales ?? []) as CampaignSaleRow[]),
         isLoading: false,
         source: "supabase"
@@ -238,6 +269,7 @@ export function useProductRadar(): RadarState {
         metrics: (metrics ?? []) as CampaignMetricRow[],
         sales: (sales ?? []) as CampaignSaleRow[],
         syncLogs: (syncLogs ?? []) as SyncLogRow[],
+        plannerActivities: (plannerActivities ?? []) as PlannerActivityRow[],
         dashboard: buildDashboard((metrics ?? []) as CampaignMetricRow[], (sales ?? []) as CampaignSaleRow[]),
         isLoading: false,
         source: "supabase"
@@ -261,6 +293,7 @@ export function useProductRadar(): RadarState {
       metrics: metricRows,
       sales: saleRows,
       syncLogs: (syncLogs ?? []) as SyncLogRow[],
+      plannerActivities: (plannerActivities ?? []) as PlannerActivityRow[],
       dashboard: buildDashboard(metricRows, saleRows),
       isLoading: false,
       source: "supabase"
@@ -284,6 +317,7 @@ export function useProductRadar(): RadarState {
       .on("postgres_changes", { event: "*", schema: "public", table: "campaign_sales" }, scheduleRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "sync_logs" }, scheduleRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "products" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "planner_activities" }, scheduleRefresh)
       .subscribe();
 
     return () => {

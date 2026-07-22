@@ -1,6 +1,9 @@
 import {
   BarChart3,
   Boxes,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Home,
   LayoutGrid,
   List,
@@ -31,7 +34,8 @@ import {
   useProductRadar,
   type CampaignMetricRow,
   type CampaignRow,
-  type EnrichedProduct
+  type EnrichedProduct,
+  type PlannerActivityRow
 } from "./hooks/useProductRadar";
 import { money, percent, labelFromKey } from "./lib/format";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
@@ -39,13 +43,16 @@ import { calculateFinancials } from "./lib/calculations";
 import { calculateProductScore } from "./lib/scoring";
 import type { CampaignChannel, CampaignStatus, ProductStatus } from "./types/business";
 
-type View = "dashboard" | "radar" | "top10" | "detail" | "campaigns" | "sync" | "reports";
+type View = "dashboard" | "radar" | "top10" | "planner" | "detail" | "campaigns" | "sync" | "reports";
 type DisplayMode = "cards" | "list";
+type PlannerActivityType = PlannerActivityRow["activity_type"];
+type PlannerStatus = PlannerActivityRow["status"];
 
 const navItems: Array<{ id: View; label: string; icon: typeof Home }> = [
   { id: "dashboard", label: "Dashboard", icon: Home },
   { id: "radar", label: "Radar", icon: Search },
   { id: "top10", label: "Top 10", icon: Trophy },
+  { id: "planner", label: "Plan", icon: CalendarDays },
   { id: "campaigns", label: "Campanas", icon: Megaphone },
   { id: "reports", label: "Reportes", icon: BarChart3 },
   { id: "sync", label: "Woo Sync", icon: RefreshCcw }
@@ -65,6 +72,8 @@ const productStatuses: ProductStatus[] = [
 
 const campaignStatuses: CampaignStatus[] = ["pendiente", "activa", "en_revision", "escalada", "pausada", "finalizada"];
 const campaignChannels: CampaignChannel[] = ["meta_ads", "organico", "whatsapp", "catalogo", "tiktok_ads"];
+const plannerActivityTypes: PlannerActivityType[] = ["campana", "anuncio", "monitoreo", "top10", "tarea"];
+const plannerStatuses: PlannerStatus[] = ["pendiente", "en_progreso", "completada", "cancelada"];
 
 function statusTone(status: string) {
   if (status === "ganador" || status === "escalar" || status === "escalada") return "green";
@@ -76,6 +85,42 @@ function statusTone(status: string) {
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function dateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateKey(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function monthStart(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, amount: number) {
+  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+}
+
+function monthLabel(date: Date) {
+  return date.toLocaleDateString("es-EC", { month: "long", year: "numeric" });
+}
+
+function buildCalendarDays(month: Date) {
+  const start = monthStart(month);
+  const firstGridDay = new Date(start);
+  firstGridDay.setDate(start.getDate() - start.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const day = new Date(firstGridDay);
+    day.setDate(firstGridDay.getDate() + index);
+    return day;
+  });
 }
 
 function numberValue(formData: FormData, key: string, fallback = 0) {
@@ -255,6 +300,18 @@ export function App() {
           />
         )}
         {view === "top10" && <Top10 products={radar.products} onRefresh={radar.refresh} onSelect={(id) => { setSelectedId(id); setView("detail"); }} />}
+        {view === "planner" && (
+          <Planner
+            products={radar.products}
+            campaigns={radar.campaigns}
+            activities={radar.plannerActivities}
+            onRefresh={radar.refresh}
+            onSelectProduct={(id) => {
+              setSelectedId(id);
+              setView("detail");
+            }}
+          />
+        )}
         {view === "detail" && selected && <ProductDetail product={selected} onRefresh={radar.refresh} />}
         {view === "campaigns" && (
           <Campaigns products={radar.products} campaigns={radar.campaigns} metrics={radar.metrics} onRefresh={radar.refresh} />
@@ -263,7 +320,7 @@ export function App() {
         {view === "sync" && <WooSync syncLogs={radar.syncLogs} products={radar.products} onRefresh={radar.refresh} />}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-30 grid grid-cols-6 border-t border-k7-line bg-white px-2 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] lg:hidden">
+      <nav className="fixed bottom-0 left-0 right-0 z-30 grid grid-cols-7 border-t border-k7-line bg-white px-2 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] lg:hidden">
         {navItems.map((item) => (
           <button
             key={item.id}
@@ -683,6 +740,355 @@ function Top10({ products, onRefresh, onSelect }: { products: EnrichedProduct[];
         ))}
       </div>
     </ViewFrame>
+  );
+}
+
+function Planner({
+  products,
+  campaigns,
+  activities,
+  onRefresh,
+  onSelectProduct
+}: {
+  products: EnrichedProduct[];
+  campaigns: CampaignRow[];
+  activities: PlannerActivityRow[];
+  onRefresh: () => Promise<void>;
+  onSelectProduct: (id: string) => void;
+}) {
+  const [currentMonth, setCurrentMonth] = useState(() => monthStart(new Date()));
+  const [selectedDate, setSelectedDate] = useState(todayKey());
+  const [editingActivity, setEditingActivity] = useState<PlannerActivityRow | null>(null);
+  const [showForm, setShowForm] = useState(false);
+
+  const days = buildCalendarDays(currentMonth);
+  const selectedActivities = activities.filter((activity) => activity.scheduled_date === selectedDate);
+  const selectedCampaigns = campaigns.filter((campaign) => campaign.start_date === selectedDate);
+  const activeCampaigns = campaigns.filter((campaign) => campaign.status === "activa" || campaign.status === "en_revision");
+
+  function countItemsForDate(day: Date) {
+    const key = dateKey(day);
+    return activities.filter((activity) => activity.scheduled_date === key).length + campaigns.filter((campaign) => campaign.start_date === key).length;
+  }
+
+  function openCreateForm(day = selectedDate) {
+    setSelectedDate(day);
+    setEditingActivity(null);
+    setShowForm(true);
+  }
+
+  return (
+    <ViewFrame eyebrow="Planificador" title="Calendario de acciones y monitoreo">
+      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+        <Card>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Mes activo</p>
+              <h2 className="text-xl font-black capitalize">{monthLabel(currentMonth)}</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="muted" aria-label="Mes anterior" onClick={() => setCurrentMonth((month) => addMonths(month, -1))}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button variant="secondary" onClick={() => {
+                const today = new Date();
+                setCurrentMonth(monthStart(today));
+                setSelectedDate(dateKey(today));
+              }}>
+                Hoy
+              </Button>
+              <Button variant="muted" aria-label="Mes siguiente" onClick={() => setCurrentMonth((month) => addMonths(month, 1))}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button onClick={() => openCreateForm()}>Nueva actividad</Button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-7 gap-1 text-center text-xs font-bold text-gray-500">
+            {["Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"].map((day) => <span key={day}>{day}</span>)}
+          </div>
+          <div className="mt-2 grid grid-cols-7 gap-1">
+            {days.map((day) => {
+              const key = dateKey(day);
+              const itemCount = countItemsForDate(day);
+              const inCurrentMonth = day.getMonth() === currentMonth.getMonth();
+              const isSelected = key === selectedDate;
+              const isToday = key === todayKey();
+
+              return (
+                <button
+                  key={key}
+                  onClick={() => setSelectedDate(key)}
+                  onDoubleClick={() => openCreateForm(key)}
+                  className={`min-h-24 rounded-lg border p-2 text-left transition ${
+                    isSelected
+                      ? "border-k7-orange bg-orange-50"
+                      : isToday
+                        ? "border-orange-200 bg-white"
+                        : "border-k7-line bg-white hover:border-k7-orange"
+                  } ${inCurrentMonth ? "text-k7-ink" : "text-gray-400"}`}
+                >
+                  <span className="text-sm font-black">{day.getDate()}</span>
+                  {itemCount > 0 && (
+                    <div className="mt-2 space-y-1">
+                      <span className="inline-flex rounded-full bg-k7-orange px-2 py-0.5 text-[11px] font-bold text-white">
+                        {itemCount} accion{itemCount === 1 ? "" : "es"}
+                      </span>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+
+        <div className="space-y-4">
+          <Card>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm text-gray-500">Dia seleccionado</p>
+                <h3 className="text-lg font-black">{parseDateKey(selectedDate).toLocaleDateString("es-EC", { weekday: "long", day: "numeric", month: "long" })}</h3>
+              </div>
+              <Button variant="secondary" onClick={() => openCreateForm(selectedDate)}>Agregar</Button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {selectedActivities.length === 0 && selectedCampaigns.length === 0 && (
+                <p className="rounded-lg bg-k7-soft p-3 text-sm font-semibold text-gray-500">No hay acciones planificadas para este dia.</p>
+              )}
+              {selectedCampaigns.map((campaign) => (
+                <div key={campaign.id} className="rounded-lg border border-k7-line p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-black">{campaign.name}</p>
+                    <Badge tone={statusTone(campaign.status) as never}>{labelFromKey(campaign.status)}</Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-500">Campana programada - {labelFromKey(campaign.channel)}</p>
+                </div>
+              ))}
+              {selectedActivities.map((activity) => (
+                <PlannerActivityItem
+                  key={activity.id}
+                  activity={activity}
+                  products={products}
+                  campaigns={campaigns}
+                  onRefresh={onRefresh}
+                  onEdit={() => {
+                    setEditingActivity(activity);
+                    setShowForm(true);
+                  }}
+                  onSelectProduct={onSelectProduct}
+                />
+              ))}
+            </div>
+          </Card>
+
+          <Card>
+            <h3 className="text-lg font-black">Campanas y anuncios activos</h3>
+            <div className="mt-3 space-y-2">
+              {activeCampaigns.length === 0 && <p className="text-sm font-semibold text-gray-500">No hay campanas activas o en revision.</p>}
+              {activeCampaigns.map((campaign) => {
+                const product = products.find((item) => item.id === campaign.product_id);
+                return (
+                  <div key={campaign.id} className="rounded-lg border border-k7-line p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-black">{campaign.name}</p>
+                      <Badge tone={statusTone(campaign.status) as never}>{labelFromKey(campaign.status)}</Badge>
+                    </div>
+                    <p className="mt-1 text-sm text-gray-500">{product?.name ?? "Producto no encontrado"} - {labelFromKey(campaign.channel)}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {showForm && (
+        <PlannerActivityForm
+          activity={editingActivity}
+          selectedDate={selectedDate}
+          products={products}
+          campaigns={campaigns}
+          onSaved={async () => {
+            setShowForm(false);
+            setEditingActivity(null);
+            await onRefresh();
+          }}
+          onCancel={() => {
+            setShowForm(false);
+            setEditingActivity(null);
+          }}
+        />
+      )}
+    </ViewFrame>
+  );
+}
+
+function PlannerActivityItem({
+  activity,
+  products,
+  campaigns,
+  onRefresh,
+  onEdit,
+  onSelectProduct
+}: {
+  activity: PlannerActivityRow;
+  products: EnrichedProduct[];
+  campaigns: CampaignRow[];
+  onRefresh: () => Promise<void>;
+  onEdit: () => void;
+  onSelectProduct: (id: string) => void;
+}) {
+  const product = products.find((item) => item.id === activity.product_id);
+  const campaign = campaigns.find((item) => item.id === activity.campaign_id);
+
+  async function updateStatus(status: PlannerStatus) {
+    const { error } = await supabase.from("planner_activities").update({ status, updated_at: new Date().toISOString() }).eq("id", activity.id);
+    if (error) {
+      window.alert(`No se pudo actualizar la actividad: ${error.message}`);
+      return;
+    }
+    await onRefresh();
+  }
+
+  async function remove() {
+    if (!window.confirm("Quieres eliminar esta actividad del planificador?")) return;
+    const { error } = await supabase.from("planner_activities").delete().eq("id", activity.id);
+    if (error) {
+      window.alert(`No se pudo eliminar la actividad: ${error.message}`);
+      return;
+    }
+    await onRefresh();
+  }
+
+  return (
+    <div className="rounded-lg border border-k7-line p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="font-black">{activity.title}</p>
+          <p className="mt-1 text-sm text-gray-500">
+            {activity.scheduled_time ? `${activity.scheduled_time.slice(0, 5)} - ` : ""}{labelFromKey(activity.activity_type)}
+            {campaign ? ` - ${campaign.name}` : ""}
+          </p>
+        </div>
+        <Badge tone={plannerStatusTone(activity.status)}>{labelFromKey(activity.status)}</Badge>
+      </div>
+      {activity.description && <p className="mt-2 text-sm text-gray-600">{activity.description}</p>}
+      {product && (
+        <button onClick={() => onSelectProduct(product.id)} className="mt-2 text-sm font-bold text-k7-orange hover:underline">
+          {product.name}
+        </button>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {product && (
+          <Button variant="secondary" onClick={() => void placeProductInTop10(product, products, onRefresh)}>
+            Pasar a Top 10
+          </Button>
+        )}
+        <Button variant="muted" onClick={() => void updateStatus("en_progreso")}>En progreso</Button>
+        <Button variant="success" onClick={() => void updateStatus("completada")}>Completar</Button>
+        <Button variant="ghost" onClick={onEdit}>Editar</Button>
+        <Button variant="danger" onClick={() => void remove()}>Eliminar</Button>
+      </div>
+    </div>
+  );
+}
+
+function plannerStatusTone(status: PlannerStatus) {
+  if (status === "completada") return "green";
+  if (status === "cancelada") return "red";
+  if (status === "en_progreso") return "orange";
+  return "gray";
+}
+
+function PlannerActivityForm({
+  activity,
+  selectedDate,
+  products,
+  campaigns,
+  onSaved,
+  onCancel
+}: {
+  activity: PlannerActivityRow | null;
+  selectedDate: string;
+  products: EnrichedProduct[];
+  campaigns: CampaignRow[];
+  onSaved: () => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const payload = {
+      title: stringValue(form, "title"),
+      description: stringValue(form, "description") || null,
+      activity_type: stringValue(form, "activity_type", "tarea"),
+      status: stringValue(form, "status", "pendiente"),
+      scheduled_date: stringValue(form, "scheduled_date", selectedDate),
+      scheduled_time: stringValue(form, "scheduled_time") || null,
+      product_id: stringValue(form, "product_id") || null,
+      campaign_id: stringValue(form, "campaign_id") || null,
+      action_label: stringValue(form, "action_label") || null,
+      owner: stringValue(form, "owner") || null,
+      updated_at: new Date().toISOString()
+    };
+
+    setSaving(true);
+    const query = activity
+      ? supabase.from("planner_activities").update(payload).eq("id", activity.id)
+      : supabase.from("planner_activities").insert({ id: crypto.randomUUID(), ...payload });
+    const { error } = await query;
+    setSaving(false);
+
+    if (error) {
+      window.alert(`No se pudo guardar la actividad: ${error.message}`);
+      return;
+    }
+
+    await onSaved();
+  }
+
+  return (
+    <Card>
+      <h3 className="text-lg font-black">{activity ? "Editar actividad" : "Registrar actividad"}</h3>
+      <form onSubmit={handleSubmit} className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Input name="title" label="Titulo" required defaultValue={activity?.title ?? ""} />
+        <Select name="activity_type" label="Tipo" options={plannerActivityTypes} defaultValue={activity?.activity_type ?? "tarea"} />
+        <Select name="status" label="Estado" options={plannerStatuses} defaultValue={activity?.status ?? "pendiente"} />
+        <Input name="scheduled_date" label="Fecha" type="date" required defaultValue={activity?.scheduled_date ?? selectedDate} />
+        <Input name="scheduled_time" label="Hora" type="time" defaultValue={activity?.scheduled_time?.slice(0, 5) ?? ""} />
+        <label className="text-sm font-semibold">
+          Producto
+          <select name="product_id" defaultValue={activity?.product_id ?? ""} className="mt-1 min-h-11 w-full rounded-xl border border-k7-line px-3">
+            <option value="">Sin producto</option>
+            {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+          </select>
+        </label>
+        <label className="text-sm font-semibold">
+          Campana / anuncio
+          <select name="campaign_id" defaultValue={activity?.campaign_id ?? ""} className="mt-1 min-h-11 w-full rounded-xl border border-k7-line px-3">
+            <option value="">Sin campana</option>
+            {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+          </select>
+        </label>
+        <Input name="owner" label="Responsable" defaultValue={activity?.owner ?? ""} />
+        <Input name="action_label" label="Accion" defaultValue={activity?.action_label ?? ""} />
+        <label className="text-sm font-semibold sm:col-span-2 xl:col-span-4">
+          Descripcion
+          <textarea
+            name="description"
+            defaultValue={activity?.description ?? ""}
+            className="mt-1 min-h-24 w-full rounded-xl border border-k7-line px-3 py-2 outline-none focus:border-k7-orange focus:ring-2 focus:ring-orange-100"
+          />
+        </label>
+        <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-4">
+          <Button type="submit" disabled={saving}>{saving ? "Guardando..." : "Guardar actividad"}</Button>
+          <Button type="button" variant="muted" onClick={onCancel}>Cancelar</Button>
+        </div>
+      </form>
+    </Card>
   );
 }
 
